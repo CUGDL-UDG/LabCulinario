@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análisis de Encuesta Culinaria</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Usar una fuente más moderna */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Añadir estilos para Inter */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold mb-2 text-indigo-400">Análisis de Encuesta: Laboratorio Culinario</h1>
+            <p class="text-lg text-gray-400">Visualización de frecuencias y proporciones de las respuestas.</p>
+        </header>
+
+        <!-- Sección de Datos Crudos -->
+        <section class="bg-gray-800 rounded-lg shadow-xl mb-8">
+            <details>
+                <summary class="cursor-pointer p-4 md:p-6 text-xl font-semibold text-white rounded-t-lg hover:bg-gray-700 transition-colors">
+                    Ver Datos Crudos (con ID)
+                </summary>
+                <div class="overflow-x-auto p-4 md:p-6 border-t border-gray-700">
+                    <table class="min-w-full divide-y divide-gray-700">
+                        <thead class="bg-gray-700">
+                            <tr id="tableHeader">
+                                <!-- Los encabezados se generarán con JS -->
+                            </tr>
+                        </thead>
+                        <tbody id="rawDataTbody" class="divide-y divide-gray-600 bg-gray-800">
+                            <!-- Los datos se generarán con JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+
+        <!-- Sección de Análisis Gráfico -->
+        <section>
+            <h2 class="text-2xl md:text-3xl font-bold mb-6 text-indigo-400">Análisis Gráfico</h2>
+            <div id="analysisGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Los gráficos se generarán con JS -->
+                <p class="text-gray-400 col-span-full">Cargando y procesando datos...</p>
+            </div>
+        </section>
+
+    </div>
+
+    <script>
+        // --- CONFIGURACIÓN ---
+        
+        // Ruta al archivo CSV
+        const CSV_FILE_PATH = 'datos_labculinario.csv';
+        
+        // Mapeo de encabezados del CSV a títulos de gráficos y tipos
+        // Esto nos permite controlar qué columnas graficar y cómo
+        const QUESTION_MAP = {
+          '¿Cuánto tiempo pasas a la semana en el CUGDL?': { title: 'Tiempo en CUGDL', type: 'pie' },
+          '¿Con qué frecuencia consumes alimentos dentro del CUGDL a la semana?': { title: 'Frecuencia de Consumo', type: 'pie' },
+          '¿Cuánto tiempo tienes para consumir tus alimentos cuando tienes clases?': { title: 'Tiempo para Comer', type: 'pie' },
+          '¿Dónde adquieres los alimentos que consumes en la universidad?': { title: 'Origen de Alimentos', type: 'bar', multiSelect: true },
+          '¿Consideras que los alimentos de la cafetería son saludables?': { title: 'Cafetería Saludable', type: 'pie' },
+          '¿Consideras que los alimentos de la cafetería son accesibles?': { title: 'Cafetería Accesible', type: 'pie' },
+          '¿Consideras necesario que se cree un espacio tipo comedor dentro del plantel?': { title: 'Necesidad de Comedor', type: 'pie' },
+          '¿Consideras que los alimentos que consumes en tu día a día son saludables?': { title: 'Alimentos Diarios Saludables', type: 'pie' },
+          '¿Sabes cocinar o preparar alimentos saludables?': { title: 'Sabe Cocinar Saludable', type: 'pie' },
+          '¿Estarias interesado en participar en un taller donde enseñen a preparar alimentos saludables?': { title: 'Interés en Taller', type: 'pie' }
+          // La columna de opiniones se ignora para los gráficos, pero aparece en la tabla.
+        };
+
+        const TIMESTAMP_HEADER = 'Marca temporal';
+
+        // --- LÓGICA PRINCIPAL ---
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAndProcessData();
+        });
+
+        async function loadAndProcessData() {
+            const grid = document.getElementById('analysisGrid');
+            try {
+                const response = await fetch(CSV_FILE_PATH);
+                if (!response.ok) {
+                    throw new Error(`Error al cargar el archivo: ${response.statusText}`);
+                }
+                const csvText = await response.text();
+                
+                const [headers, ...rows] = parseCSV(csvText);
+
+                // Poblar la tabla de datos crudos
+                populateRawDataTable(headers, rows);
+                
+                // Generar los análisis y gráficos
+                generateAnalyses(headers, rows);
+
+            } catch (error) {
+                console.error('Error al procesar el archivo:', error);
+                grid.innerHTML = `<p class="text-red-400 col-span-full">Error: No se pudo cargar o procesar el archivo CSV. Asegúrate de que el archivo "${CSV_FILE_PATH}" esté en la misma carpeta que este HTML.</p>`;
+            }
+        }
+
+        // --- FUNCIONES DE PROCESAMIENTO ---
+
+        /**
+         * Parsea un texto CSV a un array de arrays.
+         * Maneja campos entre comillas que pueden contener comas.
+         */
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            
+            const data = lines.slice(1).map(line => {
+                if (line.trim() === '') return null;
+                const row = [];
+                let field = '';
+                let inQuotes = false;
+                
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    
+                    if (char === '"' && (i === 0 || line[i-1] !== '\\')) {
+                        if (inQuotes && line[i+1] === '"') {
+                            field += '"';
+                            i++; // Saltar la comilla de escape
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === ',' && !inQuotes) {
+                        row.push(field.trim().replace(/^"|"$/g, ''));
+                        field = '';
+                    } else {
+                        field += char;
+                    }
+                }
+                row.push(field.trim().replace(/^"|"$/g, '')); // Añadir último campo
+                return row;
+            }).filter(row => row && row.length === headers.length); // Filtrar líneas vacías o mal formadas
+            
+            return [headers, ...data];
+        }
+
+        /**
+         * Rellena la tabla de datos crudos.
+         */
+        function populateRawDataTable(headers, rows) {
+            const tableHeader = document.getElementById('tableHeader');
+            const tableBody = document.getElementById('rawDataTbody');
+            
+            // Limpiar contenido previo
+            tableHeader.innerHTML = '';
+            tableBody.innerHTML = '';
+
+            // Crear encabezado de tabla
+            const idHeader = document.createElement('th');
+            idHeader.className = "px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider";
+            idHeader.textContent = 'ID';
+            tableHeader.appendChild(idHeader);
+
+            headers.forEach(header => {
+                if (header === TIMESTAMP_HEADER) return; // Ignorar timestamp
+                const th = document.createElement('th');
+                th.className = "px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider";
+                th.textContent = header;
+                tableHeader.appendChild(th);
+            });
+
+            // Crear filas de tabla
+            rows.forEach((row, index) => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-700 transition-colors";
+                
+                // Añadir celda de ID
+                const idCell = document.createElement('td');
+                idCell.className = "px-4 py-3 whitespace-nowrap text-sm font-medium text-white";
+                idCell.textContent = index + 1; // ID basado en 1
+                tr.appendChild(idCell);
+
+                // Añadir celdas de datos
+                row.forEach((cell, cellIndex) => {
+                    if (headers[cellIndex] === TIMESTAMP_HEADER) return; // Ignorar timestamp
+                    const td = document.createElement('td');
+                    td.className = "px-4 py-3 whitespace-nowrap text-sm text-gray-300";
+                    td.textContent = cell;
+                    tr.appendChild(td);
+                });
+                
+                tableBody.appendChild(tr);
+            });
+        }
+
+        /**
+         * Genera las tarjetas de análisis y los gráficos.
+         */
+        function generateAnalyses(headers, rows) {
+            const grid = document.getElementById('analysisGrid');
+            grid.innerHTML = ''; // Limpiar el mensaje "Cargando..."
+
+            headers.forEach((header, index) => {
+                const config = QUESTION_MAP[header];
+                if (!config) return; // Si no está en el map, no se grafica
+
+                const canvasId = `chart-${index}`;
+                
+                // Crear la tarjeta (card) para el gráfico
+                const card = document.createElement('div');
+                card.className = "bg-gray-800 rounded-lg shadow-xl p-4 flex flex-col items-center";
+                card.innerHTML = `
+                    <h3 class="text-lg font-semibold mb-3 text-center text-white">${config.title}</h3>
+                    <div class="w-full h-64 md:h-72 flex justify-center items-center">
+                        <canvas id="${canvasId}"></canvas>
+                    </div>
+                `;
+                grid.appendChild(card);
+                
+                // Calcular frecuencias
+                const frequencies = calculateFrequencies(rows, index, config.multiSelect);
+                
+                // Crear el gráfico
+                createChart(canvasId, config.type, frequencies, config.title);
+            });
+        }
+
+        /**
+         * Calcula la frecuencia de respuestas para una columna específica.
+         * Maneja respuestas de selección múltiple (separadas por coma).
+         */
+        function calculateFrequencies(rows, colIndex, isMultiSelect = false) {
+            const counts = {};
+            for (const row of rows) {
+                const value = row[colIndex];
+                if (!value) continue; // Saltar celdas vacías
+
+                if (isMultiSelect) {
+                    const items = value.split(',').map(item => item.trim());
+                    items.forEach(item => {
+                        if(item) {
+                           counts[item] = (counts[item] || 0) + 1;
+                        }
+                    });
+                } else {
+                    counts[value] = (counts[value] || 0) + 1;
+                }
+            }
+            return counts;
+        }
+
+        /**
+         * Crea una instancia de Chart.js en el canvas especificado.
+         */
+        function createChart(canvasId, type, data, title) {
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return;
+
+            const labels = Object.keys(data);
+            const values = Object.values(data);
+            const colors = generateColors(labels.length);
+            
+            // Opciones comunes para todos los gráficos
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: type === 'pie' ? 'bottom' : 'top',
+                        labels: {
+                            color: '#e5e7eb', // text-gray-200
+                            font: {
+                                family: "'Inter', sans-serif"
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed !== null) {
+                                    if(type === 'pie') {
+                                        const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                        const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                        label += `${context.parsed} (${percentage}%)`;
+                                    } else {
+                                        label += context.parsed;
+                                    }
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                }
+            };
+
+            // Opciones específicas por tipo de gráfico
+            if (type === 'bar') {
+                options.scales = {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#d1d5db', // text-gray-300
+                            stepSize: 1 // Asegurar números enteros
+                        },
+                        grid: {
+                            color: '#4b5563' // gray-600
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#d1d5db' // text-gray-300
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                };
+                options.plugins.legend.display = false; // Ocultar leyenda para barras
+            }
+            
+            if (type === 'pie') {
+                 options.plugins.tooltip.callbacks.label = function(context) {
+                    let label = context.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                    const value = context.parsed;
+                    const percentage = ((value / total) * 100).toFixed(1);
+                    return `${label} ${value} (${percentage}%)`;
+                }
+            }
+
+
+            new Chart(ctx, {
+                type: type, // 'pie', 'doughnut', 'bar'
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: title,
+                        data: values,
+                        backgroundColor: colors,
+                        borderColor: type === 'bar' ? colors : '#4b5563', // gray-600
+                        borderWidth: type === 'bar' ? 0 : 2,
+                        hoverOffset: 4
+                    }]
+                },
+                options: options
+            });
+        }
+
+        /**
+         * Genera una paleta de colores vibrantes para los gráficos.
+         */
+        function generateColors(count) {
+            const colors = [
+                '#4F46E5', // Indigo 600
+                '#EC4899', // Pink 500
+                '#10B981', // Emerald 500
+                '#F59E0B', // Amber 500
+                '#3B82F6', // Blue 500
+                '#8B5CF6', // Violet 500
+                '#D946EF', // Fuchsia 500
+                '#0EA5E9', // Sky 500
+                '#EAB308', // Yellow 500
+                '#6366F1', // Indigo 500
+                '#EF4444'  // Red 500
+            ];
+            let result = [];
+            for(let i = 0; i < count; i++) {
+                result.push(colors[i % colors.length]);
+            }
+            return result;
+        }
+
+    </script>
+</body>
+</html>
+
